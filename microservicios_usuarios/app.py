@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from flask_jwt_extended import JWTManager, create_access_token
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 import psycopg2
 import psycopg2.extras
 
@@ -62,6 +62,64 @@ def login():
             cursor.close()
         if conn:
             conn.close()
+
+@app.route('/user/<int:user_id>', methods=['GET'])
+@jwt_required()
+def get_user(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM public.usuarios WHERE id = %s", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        return jsonify(user), 200
+    except psycopg2.DatabaseError as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/user/<int:user_id>', methods=['PUT'])
+@jwt_required()
+def update_user(user_id):
+    user_details = request.json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE public.usuarios SET nombre=%s, apellido=%s, correo=%s, telefono=%s, tipo_usuario=%s, contrasena=%s WHERE id=%s RETURNING id",
+            (user_details['nombre'], user_details['apellido'], user_details['correo'], user_details['telefono'], user_details['tipo_usuario'], user_details['contrasena'], user_id)
+        )
+        updated_user = cursor.fetchone()
+        if updated_user is None:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        conn.commit()
+        return jsonify({'message': 'Usuario actualizado exitosamente'}), 200
+    except psycopg2.DatabaseError as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+        
+@app.route('/user/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM public.usuarios WHERE id = %s RETURNING id", (user_id,))
+        deleted_user = cursor.fetchone()
+        if deleted_user is None:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        conn.commit()
+        return jsonify({'message': 'Usuario eliminado exitosamente'}), 200
+    except psycopg2.DatabaseError as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 
 @app.route('/create_user', methods=['POST'])
 def create_user():

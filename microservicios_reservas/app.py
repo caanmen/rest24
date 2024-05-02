@@ -1,7 +1,10 @@
 from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from datetime import datetime
 import psycopg2
 import psycopg2.extras
+
+from datetime import datetime
 
 app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = 'jwt_super_secreto'
@@ -16,6 +19,15 @@ def get_db_connection():
         password="admin",
         host="localhost"
     )
+
+def serialize_reserva(reserva):
+    return {
+        'id': reserva['id'],
+        'fecha': reserva['fecha'].isoformat() if reserva['fecha'] else None,
+        'hora': reserva['hora'].strftime('%H:%M:%S') if reserva['hora'] else None,
+        'estado': reserva['estado'],
+        'detalle': reserva['detalle']
+    }
 
 @app.route('/')
 def home():
@@ -46,24 +58,34 @@ def crear_reserva():
     user_identity = get_jwt_identity()
     user_id = user_identity['user_id']
 
-    fecha = data.get('fecha')
-    hora = data.get('hora')
+    fecha_str = data.get('fecha')
+    hora_str = data.get('hora')
     estado = data.get('estado')
     detalle = data.get('detalle')
+
+    # Convertir fecha y hora a objetos apropiados
+    try:
+        fecha = datetime.strptime(fecha_str, "%d-%m-%Y").date()
+        hora = datetime.strptime(hora_str, "%H:%M").time()
+    except ValueError as e:
+        return jsonify({"error": f"Formato de fecha o hora incorrecto: {str(e)}"}), 400
 
     if not all([fecha, hora, estado, detalle]):
         return jsonify({"error": "Información incompleta para crear la reserva"}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     try:
         cursor.execute(
-            "INSERT INTO reservas (fecha, hora, estado, detalle) VALUES (%s, %s, %s, %s) RETURNING id;",
+            "INSERT INTO reservas (fecha, hora, estado, detalle) VALUES (%s, %s, %s, %s) RETURNING id, fecha, hora, estado, detalle;",
             (fecha, hora, estado, detalle)
         )
-        reserva_id = cursor.fetchone()[0]
+        reserva = cursor.fetchone()
+        if not reserva:
+            return jsonify({'error': 'Error al crear la reserva'}), 500
+        reserva_serializada = serialize_reserva(reserva)
         conn.commit()
-        return jsonify({"mensaje": "Reserva creada con éxito", "reserva_id": reserva_id}), 201
+        return jsonify({"mensaje": "Reserva creada con éxito", "reserva": reserva_serializada}), 201
     except psycopg2.DatabaseError as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -114,6 +136,28 @@ def delete_reserva(reserva_id):
         cursor.close()
         conn.close()
 
+@app.route('/reservas/fecha', methods=['GET'])
+@jwt_required()
+def reservas_por_fecha():
+    fecha = request.args.get('fecha')
+    if not fecha:
+        return jsonify({'error': 'Fecha requerida'}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    try:
+        cursor.execute("SELECT id, fecha, hora, estado, detalle FROM public.reservas WHERE fecha = %s", (fecha,))
+        reservas = cursor.fetchall()
+        if not reservas:
+            return jsonify({'error': 'No se encontraron reservas para esta fecha'}), 404
+        reservas_serializadas = [serialize_reserva(reserva) for reserva in reservas]
+        return jsonify(reservas_serializadas), 200
+    except psycopg2.DatabaseError as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+        
 
 if __name__ == '__main__':
     app.run(debug=True, port=3100)

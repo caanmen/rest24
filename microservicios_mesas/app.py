@@ -6,12 +6,7 @@ app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = 'jwt_super_secreto'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False  # Configuración para que el token no expire
 
-@app.route('/')
-
-def home():
-    return 'Bienvenido a la API de ReservaFacil!'
-
-jwt = JWTManager(app)
+jwt = JWTManager(app)  # JWTManager se inicializa después de configurar la app
 
 def get_db_connection():
     return psycopg2.connect(
@@ -20,6 +15,10 @@ def get_db_connection():
         password="admin",
         host="localhost"
     )
+
+@app.route('/')
+def home():
+    return 'Bienvenido a la API de ReservaFacil!'
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -39,16 +38,15 @@ def login():
     else:
         return jsonify({"error": "Credenciales inválidas"}), 401
 
-    @app.route('/')
-
-    def home():
-        return 'Bienvenido a la API de ReservaFacil!'
-
 @app.route('/mesas', methods=['POST'])
 @jwt_required()
 def crear_mesa():
     data = request.get_json()
     user_identity = get_jwt_identity()
+
+    if not isinstance(user_identity, dict) or 'user_id' not in user_identity:
+        return jsonify({'error': 'Usuario no autenticado o JWT malformado'}), 401
+
     user_id = user_identity['user_id']
 
     if not data or 'personas' not in data or 'localizacion' not in data or 'numero_mesa' not in data:
@@ -56,16 +54,16 @@ def crear_mesa():
 
     personas = data['personas']
     localizacion = data['localizacion']
-    numero_mesa = data['numero_mesa']  # Asegurarse de que el número de mesa viene incluido
+    numero_mesa = data['numero_mesa']
+    usuario_responsable = user_id  # Asumimos que el usuario que realiza la acción es el responsable
 
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute("SET myapp.current_user_id = %s", [user_id])
     try:
         cursor.execute(
-            'INSERT INTO mesas (numero_mesa, personas, localizacion, disponible) VALUES (%s, %s, %s, True) RETURNING numero_mesa;',
-            (numero_mesa, personas, localizacion)
+            'INSERT INTO mesas (numero_mesa, personas, localizacion, disponible, usuario_responsable) VALUES (%s, %s, %s, True, %s) RETURNING numero_mesa;',
+            (numero_mesa, personas, localizacion, usuario_responsable)
         )
         numero_mesa = cursor.fetchone()[0]
         conn.commit()
@@ -76,61 +74,24 @@ def crear_mesa():
         cursor.close()
         conn.close()
 
-@app.route('/mesas/<int:numero_mesa>', methods=['GET'])
-@jwt_required()
-def obtener_mesa(numero_mesa):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT numero_mesa, personas, localizacion, disponible FROM mesas WHERE numero_mesa = %s;", (numero_mesa,))
-        mesa = cursor.fetchone()
-        if not mesa:
-            return jsonify({"error": "Mesa no encontrada"}), 404
-        mesa_info = {
-            "numero_mesa": mesa[0],
-            "personas": mesa[1],
-            "localizacion": mesa[2],
-            "disponible": mesa[3]
-        }
-        return jsonify(mesa_info), 200
-    except psycopg2.DatabaseError as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/mesas/<int:numero_mesa>', methods=['DELETE'])
-@jwt_required()
-def eliminar_mesa(numero_mesa):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM mesas WHERE numero_mesa = %s RETURNING numero_mesa;", (numero_mesa,))
-        deleted_mesa = cursor.fetchone()
-        if not deleted_mesa:
-            return jsonify({"error": "Mesa no encontrada"}), 404
-        conn.commit()
-        return jsonify({"mensaje": "Mesa eliminada con éxito"}), 200
-    except psycopg2.DatabaseError as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
-
 @app.route('/mesas/<int:numero_mesa>', methods=['PUT'])
 @jwt_required()
 def actualizar_mesa(numero_mesa):
     data = request.get_json()
+    user_identity = get_jwt_identity()
+    user_id = user_identity.get('user_id')
+
     personas = data.get('personas')
     localizacion = data.get('localizacion')
-    disponible = data.get('disponible', True)  # Por defecto, asumimos que la mesa está disponible
+    disponible = data.get('disponible', True)
+    usuario_responsable = user_id  # Asumimos que el usuario que realiza la acción es el responsable
 
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "UPDATE mesas SET personas = %s, localizacion = %s, disponible = %s WHERE numero_mesa = %s RETURNING numero_mesa;",
-            (personas, localizacion, disponible, numero_mesa)
+            "UPDATE mesas SET personas = %s, localizacion = %s, disponible = %s, usuario_responsable = %s WHERE numero_mesa = %s RETURNING numero_mesa;",
+            (personas, localizacion, disponible, usuario_responsable, numero_mesa)
         )
         updated_mesa = cursor.fetchone()
         if not updated_mesa:
@@ -143,7 +104,5 @@ def actualizar_mesa(numero_mesa):
         cursor.close()
         conn.close()
 
-
-
 if __name__ == '__main__':
-    app.run(debug=True, port=3000)
+    app.run(debug=True, port=3300)
