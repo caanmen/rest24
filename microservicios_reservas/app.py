@@ -7,7 +7,7 @@ import psycopg2.extras
 
 app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = 'jwt_super_secreto'
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False  # Configuración para que el token no expire
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False  
 
 jwt = JWTManager(app)
 
