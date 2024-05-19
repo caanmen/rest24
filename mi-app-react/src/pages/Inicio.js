@@ -1,6 +1,6 @@
 // src/pages/Inicio.js
 import React from 'react';
-import Main from '../components/Main';  // Asegúrate de que esta ruta sea correcta
+import Main from '../components/Main';
 
 const Inicio = () => (
   <div>
